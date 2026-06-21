@@ -3,3 +3,6 @@
 
 # agent worktrees
 .worktrees/
+
+# goreleaser build output
+dist/

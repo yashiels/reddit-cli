@@ -11,12 +11,17 @@ import (
 
 var jsonOut bool
 
+// version is set at build time via -ldflags
+// "-X github.com/yashiels/reddit-cli/internal/cmd.version=<tag>".
+var version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "reddit",
 	Short: "Reddit from the terminal, authenticating as the official Android app",
 	Long: "reddit is a CLI for Reddit that authenticates using the official Android\n" +
 		"app's OAuth client (extracted from the APK). It adds request jitter and\n" +
 		"429 backoff to stay under rate limits. Personal use only — against ToS.",
+	Version:       version,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }

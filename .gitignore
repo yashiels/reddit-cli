@@ -1,2 +1,5 @@
 /reddit
 .env
+
+# agent worktrees
+.worktrees/

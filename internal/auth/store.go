@@ -39,13 +39,14 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 var tokenHTTP = NewHTTPClient(30 * time.Second)
 
 // Pulled from base.apk (com.reddit.frontpage 2026.24.0 / build 2624050):
-//   res/values/strings.xml  oauth_client_id = ohXpoqrZYub1kg
-//   res/values/strings.xml  base_uri_default = https://oauth.reddit.com
-//   classes*.dex            UA template: Reddit/Version <v>/Build <b>/Android <api>
+//
+//	res/values/strings.xml  oauth_client_id = ohXpoqrZYub1kg
+//	res/values/strings.xml  base_uri_default = https://oauth.reddit.com
+//	classes*.dex            UA template: Reddit/Version <v>/Build <b>/Android <api>
 const (
-	AppClientID = "ohXpoqrZYub1kg"
-	UserAgent   = "Reddit/Version 2026.24.0/Build 2624050/Android 14"
-	TokenURL    = "https://www.reddit.com/api/v1/access_token"
+	AppClientID    = "ohXpoqrZYub1kg"
+	UserAgent      = "Reddit/Version 2026.24.0/Build 2624050/Android 14"
+	TokenURL       = "https://www.reddit.com/api/v1/access_token"
 	installedGrant = "https://oauth.reddit.com/grants/installed_client"
 )
 

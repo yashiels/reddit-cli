@@ -29,16 +29,16 @@ type listing struct {
 }
 
 type thing struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"` // fullname, e.g. t3_abc123
-	Title       string  `json:"title"`
-	Author      string  `json:"author"`
-	Subreddit   string  `json:"subreddit"`
-	Score       int     `json:"score"`
-	NumComments int     `json:"num_comments"`
-	Permalink   string  `json:"permalink"`
-	SelfText    string  `json:"selftext"`
-	Body        string  `json:"body"`
+	ID          string `json:"id"`
+	Name        string `json:"name"` // fullname, e.g. t3_abc123
+	Title       string `json:"title"`
+	Author      string `json:"author"`
+	Subreddit   string `json:"subreddit"`
+	Score       int    `json:"score"`
+	NumComments int    `json:"num_comments"`
+	Permalink   string `json:"permalink"`
+	SelfText    string `json:"selftext"`
+	Body        string `json:"body"`
 }
 
 // ---- login ----
@@ -81,7 +81,7 @@ var loginCmd = &cobra.Command{
 		}
 		if pass == "" {
 			fmt.Fprint(os.Stderr, "password: ")
-			b, err := term.ReadPassword(int(syscall.Stdin))
+			b, err := term.ReadPassword(syscall.Stdin)
 			fmt.Fprintln(os.Stderr)
 			if err != nil {
 				return err
@@ -115,10 +115,10 @@ var whoamiCmd = &cobra.Command{
 			return err
 		}
 		var me struct {
-			Name        string `json:"name"`
-			TotalKarma  int    `json:"total_karma"`
-			LinkKarma   int    `json:"link_karma"`
-			CommentKarma int   `json:"comment_karma"`
+			Name         string `json:"name"`
+			TotalKarma   int    `json:"total_karma"`
+			LinkKarma    int    `json:"link_karma"`
+			CommentKarma int    `json:"comment_karma"`
 		}
 		if err := c.Get("/api/v1/me", nil, &me); err != nil {
 			return err

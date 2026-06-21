@@ -1,0 +1,35 @@
+version: 2
+project_name: reddit-cli
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: reddit
+    main: ./cmd/reddit
+    binary: reddit
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/yashiels/reddit-cli/internal/cmd.version={{.Version}}
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - linux_amd64
+      - linux_arm64
+
+archives:
+  - id: default
+    ids:
+      - reddit
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

@@ -7,3 +7,21 @@ Agent instructions for the `reddit-cli` repo.
 - **Layout**: `cmd/reddit` (entry), `internal/auth` (OAuth + token store), `internal/api` (HTTP client with jitter/backoff), `internal/cmd` (Cobra commands).
 - **Reads need no auth** (anonymous app token); **writes need login** (see the skill). Don't add a network call without going through `internal/api.Client` — it carries the app User-Agent, bearer, jitter, 429 backoff, and the HTTP/1.1 pin that dodges Reddit's bot wall.
 - New commands: add a `*cobra.Command` in `internal/cmd/commands.go`, register it in `init()`, gate writes with `c.RequireUser()`.
+
+
+<claude-mem-context>
+# Memory Context
+
+# claude-mem status
+
+This project has no memory yet. The current session will seed it; subsequent sessions will receive auto-injected context for relevant past work.
+
+Memory injection starts on your second session in a project.
+
+`/learn-codebase` is available if the user wants to front-load the entire repo into memory in a single pass (~5 minutes on a typical repo, optional). Otherwise memory builds passively as work happens.
+
+Live activity: http://localhost:37701
+How it works: `/how-it-works`
+
+This message disappears once the first observation lands.
+</claude-mem-context>

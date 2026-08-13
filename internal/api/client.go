@@ -49,6 +49,7 @@ func New() (*Client, error) {
 		return nil, err
 	}
 	c := &Client{http: auth.NewHTTPClient(30 * time.Second)}
+	c.http.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
 	if s != nil {
 		c.authed, c.token = true, s.Token
 	} else {
@@ -107,8 +108,14 @@ func (c *Client) do(method, path string, form url.Values) ([]byte, error) {
 		return nil, err
 	}
 
+	// POST requests are not idempotent — never retry them.
+	maxAttempts := maxRetries
+	if method == "POST" {
+		maxAttempts = 0
+	}
+
 	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	for attempt := 0; attempt <= maxAttempts; attempt++ {
 		shudder()
 
 		var body io.Reader // rebuilt each attempt: a Reader is single-use
@@ -128,7 +135,9 @@ func (c *Client) do(method, path string, form url.Values) ([]byte, error) {
 		resp, err := c.http.Do(req)
 		if err != nil {
 			lastErr = err
-			backoff(attempt, 0)
+			if attempt < maxAttempts {
+				backoff(attempt, 0)
+			}
 			continue
 		}
 		data, _ := io.ReadAll(resp.Body)
@@ -138,16 +147,18 @@ func (c *Client) do(method, path string, form url.Values) ([]byte, error) {
 		case resp.StatusCode == 429 || resp.StatusCode >= 500:
 			ra, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 			lastErr = fmt.Errorf("reddit returned %s", resp.Status)
-			backoff(attempt, ra)
+			if attempt < maxAttempts {
+				backoff(attempt, ra)
+			}
 			continue
 		case resp.StatusCode == 401:
 			return nil, fmt.Errorf("unauthorized — token rejected, try `reddit login` again")
-		case resp.StatusCode >= 400:
+		case resp.StatusCode >= 300:
 			return nil, fmt.Errorf("reddit returned %s: %s", resp.Status, truncate(data))
 		}
 		return data, nil
 	}
-	return nil, fmt.Errorf("giving up after %d retries: %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("giving up after %d retries: %w", maxAttempts, lastErr)
 }
 
 func backoff(attempt, retryAfter int) {

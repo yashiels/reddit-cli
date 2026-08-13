@@ -36,7 +36,11 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-var tokenHTTP = NewHTTPClient(30 * time.Second)
+var tokenHTTP = func() *http.Client {
+	c := NewHTTPClient(30 * time.Second)
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	return c
+}()
 
 // Pulled from base.apk (com.reddit.frontpage 2026.24.0 / build 2624050):
 //
@@ -227,6 +231,9 @@ func tokenRequest(clientID, clientSecret string, form url.Values) (string, time.
 		return "", time.Time{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", time.Time{}, fmt.Errorf("token endpoint returned %s", resp.Status)
+	}
 
 	var out struct {
 		AccessToken string  `json:"access_token"`

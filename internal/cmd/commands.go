@@ -54,9 +54,11 @@ var loginCmd = &cobra.Command{
 		clientID, _ := cmd.Flags().GetString("client-id")
 		clientSecret, _ := cmd.Flags().GetString("client-secret")
 		user, _ := cmd.Flags().GetString("user")
+		user = strings.TrimSpace(user)
 		pass, _ := cmd.Flags().GetString("password")
 		otp, _ := cmd.Flags().GetString("otp")
 		token, _ := cmd.Flags().GetString("access-token")
+		token = strings.TrimSpace(token)
 
 		// No-script-app path: store a bearer lifted from a logged-in browser session.
 		if token != "" {
@@ -141,9 +143,22 @@ var feedCmd = &cobra.Command{
 		sort, _ := cmd.Flags().GetString("sort")
 		limit, _ := cmd.Flags().GetInt("limit")
 
+		if err := validateSort(cmd, []string{"hot", "new", "top", "rising", "best"}); err != nil {
+			return err
+		}
+		if err := validateLimit(cmd); err != nil {
+			return err
+		}
+
 		path := "/" + sort
 		if len(args) == 1 {
-			path = "/r/" + strings.TrimPrefix(args[0], "r/") + "/" + sort
+			sub := strings.TrimPrefix(args[0], "r/")
+			var err error
+			sub, err = validateArg("subreddit", sub)
+			if err != nil {
+				return err
+			}
+			path = "/r/" + sub + "/" + sort
 		}
 		c, err := api.New()
 		if err != nil {
@@ -173,7 +188,19 @@ var commentsCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		limit, _ := cmd.Flags().GetInt("limit")
+		sort, _ := cmd.Flags().GetString("sort")
 		id := strings.TrimPrefix(args[0], "t3_")
+		var err error
+		id, err = validateArg("post-id", id)
+		if err != nil {
+			return err
+		}
+		if err := validateSort(cmd, []string{"confidence", "top", "new", "controversial", "old", "qa"}); err != nil {
+			return err
+		}
+		if err := validateLimit(cmd); err != nil {
+			return err
+		}
 
 		c, err := api.New()
 		if err != nil {
@@ -181,7 +208,7 @@ var commentsCmd = &cobra.Command{
 		}
 		// /comments/<id> returns [postListing, commentsListing]
 		var out []listing
-		if err := c.Get("/comments/"+id, url.Values{"limit": {fmt.Sprint(limit)}, "raw_json": {"1"}}, &out); err != nil {
+		if err := c.Get("/comments/"+id, url.Values{"limit": {fmt.Sprint(limit)}, "sort": {sort}, "raw_json": {"1"}}, &out); err != nil {
 			return err
 		}
 		if jsonOut {
@@ -216,6 +243,11 @@ var userCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := strings.TrimPrefix(args[0], "u/")
+		var err error
+		name, err = validateArg("username", name)
+		if err != nil {
+			return err
+		}
 		c, err := api.New()
 		if err != nil {
 			return err
@@ -254,11 +286,24 @@ var searchCmd = &cobra.Command{
 		sort, _ := cmd.Flags().GetString("sort")
 		limit, _ := cmd.Flags().GetInt("limit")
 		q := strings.Join(args, " ")
+		if strings.TrimSpace(q) == "" {
+			return fmt.Errorf("search query is required")
+		}
+		if err := validateSort(cmd, []string{"relevance", "hot", "top", "new", "comments"}); err != nil {
+			return err
+		}
+		if err := validateLimit(cmd); err != nil {
+			return err
+		}
 
 		path := "/search"
 		params := url.Values{"q": {q}, "sort": {sort}, "limit": {fmt.Sprint(limit)}, "raw_json": {"1"}, "type": {"link"}}
 		if sub != "" {
-			path = "/r/" + strings.TrimPrefix(sub, "r/") + "/search"
+			cleanSub, err := validateArg("sub", strings.TrimPrefix(sub, "r/"))
+			if err != nil {
+				return err
+			}
+			path = "/r/" + cleanSub + "/search"
 			params.Set("restrict_sr", "1")
 		}
 		c, err := api.New()
@@ -288,6 +333,11 @@ var subredditCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := strings.TrimPrefix(args[0], "r/")
+		var err error
+		name, err = validateArg("subreddit", name)
+		if err != nil {
+			return err
+		}
 		c, err := api.New()
 		if err != nil {
 			return err
@@ -325,7 +375,19 @@ var postsCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		comments, _ := cmd.Flags().GetBool("comments")
 		limit, _ := cmd.Flags().GetInt("limit")
+		sort, _ := cmd.Flags().GetString("sort")
 		name := strings.TrimPrefix(args[0], "u/")
+		var err error
+		name, err = validateArg("username", name)
+		if err != nil {
+			return err
+		}
+		if err := validateSort(cmd, []string{"new", "hot", "top", "controversial"}); err != nil {
+			return err
+		}
+		if err := validateLimit(cmd); err != nil {
+			return err
+		}
 		kind := "submitted"
 		if comments {
 			kind = "comments"
@@ -335,7 +397,7 @@ var postsCmd = &cobra.Command{
 			return err
 		}
 		var l listing
-		if err := c.Get("/user/"+name+"/"+kind, url.Values{"limit": {fmt.Sprint(limit)}, "raw_json": {"1"}}, &l); err != nil {
+		if err := c.Get("/user/"+name+"/"+kind, url.Values{"limit": {fmt.Sprint(limit)}, "sort": {sort}, "raw_json": {"1"}}, &l); err != nil {
 			return err
 		}
 		if jsonOut {
@@ -360,6 +422,10 @@ var voteCmd = &cobra.Command{
 	Short: "Up/down/clear your vote on a post or comment (e.g. t3_abc, t1_xyz)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		fullname, err := validateArg("fullname", args[0])
+		if err != nil {
+			return err
+		}
 		dir, ok := map[string]string{"up": "1", "down": "-1", "none": "0"}[args[1]]
 		if !ok {
 			return fmt.Errorf("direction must be up, down, or none")
@@ -371,8 +437,22 @@ var voteCmd = &cobra.Command{
 		if err := c.RequireUser(); err != nil {
 			return err
 		}
-		if err := c.Post("/api/vote", url.Values{"id": {args[0]}, "dir": {dir}}, nil); err != nil {
+		var resp struct {
+			JSON struct {
+				Errors [][]string `json:"errors"`
+			} `json:"json"`
+		}
+		if err := c.Post("/api/vote", url.Values{"id": {fullname}, "dir": {dir}}, &resp); err != nil {
 			return err
+		}
+		if len(resp.JSON.Errors) > 0 {
+			var msgs []string
+			for _, e := range resp.JSON.Errors {
+				if len(e) > 1 {
+					msgs = append(msgs, e[1])
+				}
+			}
+			return fmt.Errorf("reddit rejected vote: %s", strings.Join(msgs, "; "))
 		}
 		fmt.Printf("voted %s on %s\n", args[1], args[0])
 		return nil
@@ -386,6 +466,13 @@ var replyCmd = &cobra.Command{
 	Short: "Reply to a post or comment",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		fullname, err := validateArg("fullname", args[0])
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(args[1]) == "" {
+			return fmt.Errorf("reply text is required")
+		}
 		c, err := api.New()
 		if err != nil {
 			return err
@@ -393,13 +480,61 @@ var replyCmd = &cobra.Command{
 		if err := c.RequireUser(); err != nil {
 			return err
 		}
-		form := url.Values{"thing_id": {args[0]}, "text": {args[1]}, "api_type": {"json"}}
-		if err := c.Post("/api/comment", form, nil); err != nil {
+		form := url.Values{"thing_id": {fullname}, "text": {args[1]}, "api_type": {"json"}}
+		var resp struct {
+			JSON struct {
+				Errors [][]string `json:"errors"`
+			} `json:"json"`
+		}
+		if err := c.Post("/api/comment", form, &resp); err != nil {
 			return err
+		}
+		if len(resp.JSON.Errors) > 0 {
+			var msgs []string
+			for _, e := range resp.JSON.Errors {
+				if len(e) > 1 {
+					msgs = append(msgs, e[1])
+				}
+			}
+			return fmt.Errorf("reddit rejected reply: %s", strings.Join(msgs, "; "))
 		}
 		fmt.Printf("replied to %s\n", args[0])
 		return nil
 	},
+}
+
+// validateArg checks that a path-segment argument is non-empty after trimming
+// and contains no characters that could alter the URL path.  Returns the
+// trimmed, validated value so callers use the clean copy.
+func validateArg(name, val string) (string, error) {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return "", fmt.Errorf("%s is required", name)
+	}
+	if strings.ContainsAny(val, "/?# \t\n\r\\") || val == ".." || strings.Contains(val, "%") {
+		return "", fmt.Errorf("%s contains invalid characters: %q", name, val)
+	}
+	return val, nil
+}
+
+// validateSort checks that val is in the allowed set.
+func validateSort(cmd *cobra.Command, allowed []string) error {
+	sort, _ := cmd.Flags().GetString("sort")
+	for _, s := range allowed {
+		if s == sort {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid --sort %q (allowed: %s)", sort, strings.Join(allowed, "|"))
+}
+
+// validateLimit checks limit is in 1..100.
+func validateLimit(cmd *cobra.Command) error {
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit < 1 || limit > 100 {
+		return fmt.Errorf("--limit must be between 1 and 100, got %d", limit)
+	}
+	return nil
 }
 
 func oneLine(s string) string {
@@ -420,11 +555,13 @@ func init() {
 
 	feedCmd.Flags().String("sort", "hot", "hot|new|top|rising|best")
 	feedCmd.Flags().Int("limit", 25, "number of posts")
+	commentsCmd.Flags().String("sort", "confidence", "confidence|top|new|controversial|old|qa")
 	commentsCmd.Flags().Int("limit", 20, "number of comments")
 
 	searchCmd.Flags().String("sub", "", "restrict to a subreddit")
 	searchCmd.Flags().String("sort", "relevance", "relevance|hot|top|new|comments")
 	searchCmd.Flags().Int("limit", 25, "number of results")
+	postsCmd.Flags().String("sort", "new", "new|hot|top|controversial")
 	postsCmd.Flags().Bool("comments", false, "list comments instead of submissions")
 	postsCmd.Flags().Int("limit", 25, "number of items")
 

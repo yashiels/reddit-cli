@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -38,9 +37,17 @@ func Execute() {
 	}
 }
 
-// printJSON writes v as indented JSON to stdout (for --json).
-func printJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+// writeRaw writes the upstream response bytes verbatim to stdout (for --json),
+// ensuring a single trailing newline. This preserves every field Reddit sends
+// rather than round-tripping through the reduced render structs.
+func writeRaw(b []byte) error {
+	if _, err := os.Stdout.Write(b); err != nil {
+		return err
+	}
+	if n := len(b); n == 0 || b[n-1] != '\n' {
+		if _, err := os.Stdout.Write([]byte{'\n'}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

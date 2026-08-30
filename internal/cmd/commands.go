@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -116,17 +117,21 @@ var whoamiCmd = &cobra.Command{
 		if err := c.RequireUser(); err != nil {
 			return err
 		}
+		data, err := c.GetRaw("/api/v1/me", nil)
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return writeRaw(data)
+		}
 		var me struct {
 			Name         string `json:"name"`
 			TotalKarma   int    `json:"total_karma"`
 			LinkKarma    int    `json:"link_karma"`
 			CommentKarma int    `json:"comment_karma"`
 		}
-		if err := c.Get("/api/v1/me", nil, &me); err != nil {
+		if err := json.Unmarshal(data, &me); err != nil {
 			return err
-		}
-		if jsonOut {
-			return printJSON(me)
 		}
 		fmt.Printf("u/%s — %d karma (%d link, %d comment)\n", me.Name, me.TotalKarma, me.LinkKarma, me.CommentKarma)
 		return nil
@@ -164,17 +169,21 @@ var feedCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		var l listing
-		if err := c.Get(path, url.Values{"limit": {fmt.Sprint(limit)}, "raw_json": {"1"}}, &l); err != nil {
+		data, err := c.GetRaw(path, url.Values{"limit": {fmt.Sprint(limit)}, "raw_json": {"1"}})
+		if err != nil {
 			return err
 		}
 		if jsonOut {
-			return printJSON(l)
+			return writeRaw(data)
+		}
+		var l listing
+		if err := json.Unmarshal(data, &l); err != nil {
+			return err
 		}
 		for i, ch := range l.Data.Children {
 			t := ch.Data
 			fmt.Printf("%2d. [%5d] %s\n", i+1, t.Score, t.Title)
-			fmt.Printf("    r/%s · u/%s · %d comments · %s\n", t.Subreddit, t.Author, t.NumComments, t.Name)
+			fmt.Printf("    r/%s · u/%s · %d comments · %s\n", t.Subreddit, t.Author, t.NumComments, permalinkURL(t.Permalink))
 		}
 		return nil
 	},
@@ -207,16 +216,23 @@ var commentsCmd = &cobra.Command{
 			return err
 		}
 		// /comments/<id> returns [postListing, commentsListing]
-		var out []listing
-		if err := c.Get("/comments/"+id, url.Values{"limit": {fmt.Sprint(limit)}, "sort": {sort}, "raw_json": {"1"}}, &out); err != nil {
+		data, err := c.GetRaw("/comments/"+id, url.Values{"limit": {fmt.Sprint(limit)}, "sort": {sort}, "raw_json": {"1"}})
+		if err != nil {
 			return err
 		}
 		if jsonOut {
-			return printJSON(out)
+			return writeRaw(data)
+		}
+		var out []listing
+		if err := json.Unmarshal(data, &out); err != nil {
+			return err
 		}
 		if len(out) > 0 && len(out[0].Data.Children) > 0 {
 			p := out[0].Data.Children[0].Data
 			fmt.Printf("%s\n(r/%s · u/%s · %d points)\n", p.Title, p.Subreddit, p.Author, p.Score)
+			if link := permalinkURL(p.Permalink); link != "" {
+				fmt.Printf("%s\n", link)
+			}
 			if p.SelfText != "" {
 				fmt.Printf("\n%s\n", p.SelfText)
 			}
@@ -229,6 +245,9 @@ var commentsCmd = &cobra.Command{
 					continue
 				}
 				fmt.Printf("u/%s [%d]: %s\n", t.Author, t.Score, oneLine(t.Body))
+				if link := permalinkURL(t.Permalink); link != "" {
+					fmt.Printf("    %s\n", link)
+				}
 			}
 		}
 		return nil
@@ -252,6 +271,13 @@ var userCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		data, err := c.GetRaw("/user/"+name+"/about", url.Values{"raw_json": {"1"}})
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return writeRaw(data)
+		}
 		var about struct {
 			Data struct {
 				Name         string  `json:"name"`
@@ -261,11 +287,8 @@ var userCmd = &cobra.Command{
 				CreatedUTC   float64 `json:"created_utc"`
 			} `json:"data"`
 		}
-		if err := c.Get("/user/"+name+"/about", url.Values{"raw_json": {"1"}}, &about); err != nil {
+		if err := json.Unmarshal(data, &about); err != nil {
 			return err
-		}
-		if jsonOut {
-			return printJSON(about)
 		}
 		d := about.Data
 		fmt.Printf("u/%s — %d karma (%d link, %d comment), created %s\n",
@@ -310,16 +333,20 @@ var searchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		var l listing
-		if err := c.Get(path, params, &l); err != nil {
+		data, err := c.GetRaw(path, params)
+		if err != nil {
 			return err
 		}
 		if jsonOut {
-			return printJSON(l)
+			return writeRaw(data)
+		}
+		var l listing
+		if err := json.Unmarshal(data, &l); err != nil {
+			return err
 		}
 		for i, ch := range l.Data.Children {
 			t := ch.Data
-			fmt.Printf("%2d. [%5d] %s\n    r/%s · u/%s · %d comments · %s\n", i+1, t.Score, t.Title, t.Subreddit, t.Author, t.NumComments, t.Name)
+			fmt.Printf("%2d. [%5d] %s\n    r/%s · u/%s · %d comments · %s\n", i+1, t.Score, t.Title, t.Subreddit, t.Author, t.NumComments, permalinkURL(t.Permalink))
 		}
 		return nil
 	},
@@ -342,6 +369,13 @@ var subredditCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		data, err := c.GetRaw("/r/"+name+"/about", url.Values{"raw_json": {"1"}})
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return writeRaw(data)
+		}
 		var about struct {
 			Data struct {
 				DisplayName       string  `json:"display_name"`
@@ -352,11 +386,8 @@ var subredditCmd = &cobra.Command{
 				CreatedUTC        float64 `json:"created_utc"`
 			} `json:"data"`
 		}
-		if err := c.Get("/r/"+name+"/about", url.Values{"raw_json": {"1"}}, &about); err != nil {
+		if err := json.Unmarshal(data, &about); err != nil {
 			return err
-		}
-		if jsonOut {
-			return printJSON(about)
 		}
 		d := about.Data
 		fmt.Printf("r/%s — %s\n%d subscribers · %d online · since %s\n\n%s\n",
@@ -396,19 +427,26 @@ var postsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		var l listing
-		if err := c.Get("/user/"+name+"/"+kind, url.Values{"limit": {fmt.Sprint(limit)}, "sort": {sort}, "raw_json": {"1"}}, &l); err != nil {
+		data, err := c.GetRaw("/user/"+name+"/"+kind, url.Values{"limit": {fmt.Sprint(limit)}, "sort": {sort}, "raw_json": {"1"}})
+		if err != nil {
 			return err
 		}
 		if jsonOut {
-			return printJSON(l)
+			return writeRaw(data)
+		}
+		var l listing
+		if err := json.Unmarshal(data, &l); err != nil {
+			return err
 		}
 		for i, ch := range l.Data.Children {
 			t := ch.Data
 			if comments {
 				fmt.Printf("%2d. [%4d] r/%s: %s\n", i+1, t.Score, t.Subreddit, oneLine(t.Body))
+				if link := permalinkURL(t.Permalink); link != "" {
+					fmt.Printf("    %s\n", link)
+				}
 			} else {
-				fmt.Printf("%2d. [%5d] %s\n    r/%s · %d comments · %s\n", i+1, t.Score, t.Title, t.Subreddit, t.NumComments, t.Name)
+				fmt.Printf("%2d. [%5d] %s\n    r/%s · %d comments · %s\n", i+1, t.Score, t.Title, t.Subreddit, t.NumComments, permalinkURL(t.Permalink))
 			}
 		}
 		return nil
@@ -535,6 +573,16 @@ func validateLimit(cmd *cobra.Command) error {
 		return fmt.Errorf("--limit must be between 1 and 100, got %d", limit)
 	}
 	return nil
+}
+
+// permalinkURL turns Reddit's site-relative permalink (e.g.
+// "/r/golang/comments/<id>/slug/") into a full clickable URL. It returns "" when
+// no permalink is present so callers can skip the line.
+func permalinkURL(permalink string) string {
+	if permalink == "" {
+		return ""
+	}
+	return "https://www.reddit.com" + permalink
 }
 
 func oneLine(s string) string {

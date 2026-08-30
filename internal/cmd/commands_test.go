@@ -200,6 +200,25 @@ func TestSearchCmdInvalidSort(t *testing.T) {
 	}
 }
 
+func TestPermalinkURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		permalink string
+		want      string
+	}{
+		{"typical post", "/r/golang/comments/abc123/some_slug/", "https://www.reddit.com/r/golang/comments/abc123/some_slug/"},
+		{"comment permalink", "/r/golang/comments/abc123/some_slug/def456/", "https://www.reddit.com/r/golang/comments/abc123/some_slug/def456/"},
+		{"empty stays empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := permalinkURL(tt.permalink); got != tt.want {
+				t.Errorf("permalinkURL(%q) = %q, want %q", tt.permalink, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateArgReturnsTrimmed(t *testing.T) {
 	val, err := validateArg("test", "  hello  ")
 	if err != nil {

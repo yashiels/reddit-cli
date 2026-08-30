@@ -182,12 +182,18 @@ func truncate(b []byte) string {
 	return s
 }
 
-// Get fetches path (with optional query params) and decodes JSON into v.
-func (c *Client) Get(path string, params url.Values, v any) error {
+// GetRaw fetches path (with optional query params) and returns the raw response
+// body bytes. Callers that want to emit unmodified upstream JSON use this.
+func (c *Client) GetRaw(path string, params url.Values) ([]byte, error) {
 	if len(params) > 0 {
 		path += "?" + params.Encode()
 	}
-	data, err := c.do("GET", path, nil)
+	return c.do("GET", path, nil)
+}
+
+// Get fetches path (with optional query params) and decodes JSON into v.
+func (c *Client) Get(path string, params url.Values, v any) error {
+	data, err := c.GetRaw(path, params)
 	if err != nil {
 		return err
 	}

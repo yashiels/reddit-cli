@@ -156,15 +156,36 @@ func LoginWithToken(username, token string) (*Session, error) {
 	if token == "" {
 		return nil, fmt.Errorf("empty access token")
 	}
+	token = strings.TrimPrefix(token, "Bearer ")
 	s := &Session{
 		Username:    username,
-		AccessToken: strings.TrimPrefix(token, "Bearer "),
-		ExpiresAt:   time.Now().Add(55 * time.Minute), // reddit web tokens ~1h
+		AccessToken: token,
+		ExpiresAt:   tokenExpiry(token, time.Now()),
 	}
 	if err := s.save(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+const fallbackWebTokenLifetime = 55 * time.Minute
+
+func tokenExpiry(token string, now time.Time) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return now.Add(fallbackWebTokenLifetime)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return now.Add(fallbackWebTokenLifetime)
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Exp <= 0 {
+		return now.Add(fallbackWebTokenLifetime)
+	}
+	return time.Unix(int64(claims.Exp), 0)
 }
 
 func (s *Session) refresh() error {

@@ -62,6 +62,8 @@ type Session struct {
 	ClientSecret string    `json:"client_secret"`
 	Username     string    `json:"username"`
 	Password     string    `json:"password,omitempty"`
+	Cookie       string    `json:"cookie,omitempty"`
+	UserAgent    string    `json:"user_agent,omitempty"`
 	AccessToken  string    `json:"access_token"`
 	ExpiresAt    time.Time `json:"expires_at"`
 
@@ -108,7 +110,10 @@ func (s *Session) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func (s *Session) valid() bool {
@@ -162,6 +167,37 @@ func LoginWithToken(username, token string) (*Session, error) {
 		AccessToken: token,
 		ExpiresAt:   tokenExpiry(token, time.Now()),
 	}
+	if err := s.save(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func ReadCookieFile(path string) (string, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot read cookie file")
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\r\n"), "\n")
+	if len(lines) != 2 {
+		return "", "", fmt.Errorf("cookie file must contain two lines: Cookie header value and browser User-Agent")
+	}
+	cookie, userAgent := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
+	if cookie == "" || userAgent == "" || strings.ContainsAny(cookie+userAgent, "\r\n") {
+		return "", "", fmt.Errorf("cookie file requires a non-empty Cookie header value and browser User-Agent")
+	}
+	return cookie, userAgent, nil
+}
+
+func LoginWithCookie(cookie, userAgent string) (*Session, error) {
+	s, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	if s == nil {
+		s = &Session{}
+	}
+	s.Cookie, s.UserAgent = cookie, userAgent
 	if err := s.save(); err != nil {
 		return nil, err
 	}

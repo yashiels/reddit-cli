@@ -7,6 +7,9 @@ import (
 )
 
 func TestNewHasRedirectProtection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
 	c, err := New()
 	if err != nil {
 		t.Skipf("skipping: New() failed: %v", err)

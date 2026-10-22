@@ -46,12 +46,27 @@ type thing struct {
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate with a Reddit username and password",
-	Long: "Logs in via the official app's password grant and stores the token at\n" +
-		"$XDG_CONFIG_HOME/reddit-cli/credentials.json (0600). The password is stored\n" +
-		"alongside it so the token can refresh silently — it has full account access,\n" +
-		"so treat that file like a password.",
+	Short: "Authenticate with browser cookies, a bearer token, or a script app",
+	Long: "Stores credentials in the OS config directory at reddit-cli/credentials.json (0600).\n" +
+		"Use --cookie-file for browser-cookie reads, --access-token for an OAuth bearer,\n" +
+		"or script-app credentials for password login. Treat stored credentials like a password.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cookieFile, _ := cmd.Flags().GetString("cookie-file")
+		if cmd.Flags().Changed("cookie-file") {
+			cookie, userAgent, err := auth.ReadCookieFile(cookieFile)
+			if err != nil {
+				return err
+			}
+			name, err := api.ValidateCookie(cookie, userAgent)
+			if err != nil {
+				return err
+			}
+			if _, err := auth.LoginWithCookie(cookie, userAgent); err != nil {
+				return err
+			}
+			fmt.Printf("stored cookie session for u/%s\n", name)
+			return nil
+		}
 		clientID, _ := cmd.Flags().GetString("client-id")
 		clientSecret, _ := cmd.Flags().GetString("client-secret")
 		user, _ := cmd.Flags().GetString("user")
@@ -114,10 +129,7 @@ var whoamiCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := c.RequireUser(); err != nil {
-			return err
-		}
-		data, err := c.GetRaw("/api/v1/me", nil)
+		data, err := c.Whoami()
 		if err != nil {
 			return err
 		}
@@ -594,6 +606,7 @@ func oneLine(s string) string {
 }
 
 func init() {
+	loginCmd.Flags().String("cookie-file", "", "file containing Cookie header value on line 1 and browser User-Agent on line 2")
 	loginCmd.Flags().String("client-id", "", "script-app client id (prompted if omitted)")
 	loginCmd.Flags().String("client-secret", "", "script-app client secret")
 	loginCmd.Flags().String("user", "", "username (prompted if omitted)")
@@ -613,6 +626,8 @@ func init() {
 	postsCmd.Flags().Bool("comments", false, "list comments instead of submissions")
 	postsCmd.Flags().Int("limit", 25, "number of items")
 
+	loginCmd.MarkFlagsMutuallyExclusive("cookie-file", "access-token")
+	loginCmd.MarkFlagsMutuallyExclusive("cookie-file", "client-id")
 	rootCmd.AddCommand(loginCmd, whoamiCmd, userCmd, feedCmd, commentsCmd,
 		searchCmd, subredditCmd, postsCmd, voteCmd, replyCmd)
 }

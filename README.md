@@ -14,7 +14,7 @@ make build      # -> ./reddit
 make test
 ```
 
-## Auth, in two modes
+## Auth
 
 **Anonymous (default, zero config).** Reads work immediately — no account, no
 setup — via the app's `installed_client` grant:
@@ -40,6 +40,22 @@ The token + password are stored at
 `~/Library/Application Support/reddit-cli/credentials.json` (mode 0600). The
 password is kept so the 1-hour token can refresh silently — treat that file
 like a password.
+
+### Browser cookies for reads
+
+If OAuth reads return `403 Blocked`, save the logged-in browser's raw Cookie
+header value on line 1 of a local file and its User-Agent on line 2, then run:
+
+```sh
+./reddit login --cookie-file /path/to/browser-session.txt
+```
+
+Login validates the browser identity before saving `cookie` and `user_agent`
+in the same 0600 credentials file, preserving existing OAuth credentials.
+All reads use reddit.com JSON endpoints with those cookies; `whoami` shows the
+browser account. Re-run this login when the cookie session expires. Reads fall
+back to OAuth if cookies are rejected. Vote/reply still require OAuth login.
+Treat the input file like a password and delete it after importing.
 
 ## Commands
 

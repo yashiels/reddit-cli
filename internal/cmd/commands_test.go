@@ -1,6 +1,14 @@
 package cmd
 
 import (
+	"github.com/yashiels/reddit-cli/internal/api"
+	"github.com/yashiels/reddit-cli/internal/auth"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -227,4 +235,108 @@ func TestValidateArgReturnsTrimmed(t *testing.T) {
 	if val != "hello" {
 		t.Errorf("expected trimmed 'hello', got %q", val)
 	}
+}
+
+func TestCookieLoginAndReadCommands(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	originalWeb, originalAPI := api.WebBase, api.APIBase
+	rejectIdentity := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cookie") != "session=FAKE" || r.UserAgent() != "TestBrowser/1" || r.Header.Get("Authorization") != "" {
+			t.Error("incorrect cookie transport headers")
+		}
+		switch r.URL.Path {
+		case "/api/me.json":
+			if rejectIdentity {
+				w.Write([]byte(`{"data":null}`))
+				return
+			}
+			w.Write([]byte(`{"data":{"name":"browser-user","total_karma":42,"link_karma":20,"comment_karma":22}}`))
+		case "/comments/abc.json":
+			w.Write([]byte(`[{"data":{"children":[{"kind":"t3","data":{"title":"Example post","name":"t3_abc"}}]}},{"data":{"children":[{"kind":"t1","data":{"author":"reader","body":"Example comment"}}]}}]`))
+		case "/user/browser-user/about.json":
+			w.Write([]byte(`{"data":{"name":"browser-user","total_karma":42}}`))
+		case "/r/golang/about.json":
+			w.Write([]byte(`{"data":{"display_name":"golang","title":"Go language","subscribers":100}}`))
+		case "/search.json", "/r/golang/hot.json", "/user/browser-user/submitted.json":
+			w.Write([]byte(`{"data":{"children":[{"kind":"t3","data":{"name":"t3_abc","title":"Example post","subreddit":"golang","author":"reader"}}]}}`))
+		default:
+			t.Errorf("unexpected route %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	api.WebBase, api.APIBase = server.URL, server.URL+"/unexpected-oauth"
+	t.Cleanup(func() { api.WebBase, api.APIBase = originalWeb, originalAPI })
+	cookiePath := filepath.Join(home, "browser.txt")
+	if err := os.WriteFile(cookiePath, []byte("session=FAKE\nTestBrowser/1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	flag := loginCmd.Flags().Lookup("cookie-file")
+	originalValue, originalChanged := flag.Value.String(), flag.Changed
+	if err := loginCmd.Flags().Set("cookie-file", cookiePath); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { flag.Value.Set(originalValue); flag.Changed = originalChanged })
+	if err := loginCmd.RunE(loginCmd, nil); err == nil {
+		t.Fatal("login accepted missing browser identity")
+	}
+	if stored, err := auth.Load(); err != nil || stored != nil {
+		t.Fatalf("failed validation persisted credentials: %v", err)
+	}
+	rejectIdentity = false
+	output := captureOutput(t, func() error { return loginCmd.RunE(loginCmd, nil) })
+	if !strings.Contains(output, "browser-user") || strings.Contains(output, "FAKE") {
+		t.Fatalf("login output = %q", output)
+	}
+	for _, tc := range []struct {
+		command *cobra.Command
+		args    []string
+		want    string
+	}{
+		{whoamiCmd, nil, "u/browser-user"},
+		{searchCmd, []string{"go"}, "Example post"},
+		{commentsCmd, []string{"abc"}, "Example comment"},
+		{feedCmd, []string{"golang"}, "Example post"},
+		{userCmd, []string{"browser-user"}, "browser-user"},
+		{postsCmd, []string{"browser-user"}, "Example post"},
+		{subredditCmd, []string{"golang"}, "golang"},
+	} {
+		t.Run(tc.command.Name(), func(t *testing.T) {
+			output := captureOutput(t, func() error { return tc.command.RunE(tc.command, tc.args) })
+			if !strings.Contains(output, tc.want) {
+				t.Fatalf("output %q lacks %q", output, tc.want)
+			}
+		})
+	}
+	c, err := api.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RequireUser() == nil {
+		t.Fatal("cookie-only login granted OAuth write access")
+	}
+}
+
+func captureOutput(t *testing.T, run func() error) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = writer
+	defer func() { os.Stdout = original; reader.Close(); writer.Close() }()
+	runErr := run()
+	writer.Close()
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	return string(output)
 }

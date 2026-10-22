@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"github.com/yashiels/reddit-cli/internal/api"
-	"github.com/yashiels/reddit-cli/internal/auth"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yashiels/reddit-cli/internal/api"
+	"github.com/yashiels/reddit-cli/internal/auth"
 
 	"github.com/spf13/cobra"
 )

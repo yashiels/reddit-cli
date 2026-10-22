@@ -48,7 +48,7 @@ func isolatedStore(t *testing.T) string {
 
 func TestCookieStoreRoundTripAndBackCompatibility(t *testing.T) {
 	path := isolatedStore(t)
-	legacy := &Session{ClientID: "client", ClientSecret: "secret", Username: "oauth-user", Password: "password", AccessToken: "token", ExpiresAt: time.Now().Add(time.Hour).Truncate(time.Second)}
+	legacy := &Session{ClientID: "client", ClientSecret: "secret", Username: "oauth-user", Password: "password", AccessToken: "token", ExpiresAt: time.Now().Add(time.Hour).Truncate(time.Second).UTC()}
 	if err := legacy.save(); err != nil {
 		t.Fatal(err)
 	}

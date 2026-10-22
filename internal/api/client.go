@@ -8,6 +8,7 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -25,6 +26,8 @@ import (
 // APIBase is a var so tests can point the client at a mock server.
 var APIBase = "https://oauth.reddit.com"
 
+var WebBase = "https://www.reddit.com"
+
 // Tunables for shudder. Conservative on purpose — banned beats fast.
 const (
 	minJitter  = 700 * time.Millisecond
@@ -36,9 +39,11 @@ const (
 var noSleep bool
 
 type Client struct {
-	token  func() (string, error)
-	authed bool // true if a user is logged in (vs anonymous app token)
-	http   *http.Client
+	cookie    string
+	userAgent string
+	token     func() (string, error)
+	authed    bool
+	http      *http.Client
 }
 
 // New returns a client. If a user session exists it acts as that user; otherwise
@@ -51,6 +56,9 @@ func New() (*Client, error) {
 	c := &Client{http: auth.NewHTTPClient(30 * time.Second)}
 	c.http.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
 	if s != nil {
+		c.cookie, c.userAgent = s.Cookie, s.UserAgent
+	}
+	if s != nil && (s.AccessToken != "" || s.Password != "") {
 		c.authed, c.token = true, s.Token
 	} else {
 		dev := deviceID()
@@ -103,11 +111,58 @@ func shudder() {
 
 // do performs an authenticated request with jitter and 429/5xx backoff.
 func (c *Client) do(method, path string, form url.Values) ([]byte, error) {
+	if method == http.MethodGet && c.cookie != "" {
+		cookiePath, err := browserPath(path)
+		if err != nil {
+			return nil, err
+		}
+		data, err := c.request(method, WebBase+cookiePath, form, "", true)
+		if err == nil && strings.Split(path, "?")[0] == "/api/v1/me" {
+			data, _, err = cookieIdentity(data)
+		}
+		if err == nil {
+			return data, nil
+		}
+		if !errors.Is(err, errCookieExpired) {
+			return nil, err
+		}
+		data, err = c.oauthRequest(method, path, form)
+		if err != nil || !json.Valid(data) {
+			return nil, errCookieExpired
+		}
+		return data, nil
+	}
+	return c.oauthRequest(method, path, form)
+}
+
+var errCookieExpired = errors.New("cookie session expired: re-run reddit login --cookie-file")
+
+func browserPath(path string) (string, error) {
+	u, err := url.ParseRequestURI(path)
+	if err != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return "", fmt.Errorf("invalid Reddit read path")
+	}
+	if u.Path == "/api/v1/me" {
+		u.Path = "/api/me"
+	}
+	if !strings.HasSuffix(u.Path, ".json") {
+		u.Path = strings.TrimRight(u.Path, "/") + ".json"
+	}
+	q := u.Query()
+	q.Set("raw_json", "1")
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func (c *Client) oauthRequest(method, path string, form url.Values) ([]byte, error) {
 	token, err := c.token()
 	if err != nil {
 		return nil, err
 	}
+	return c.request(method, APIBase+path, form, token, false)
+}
 
+func (c *Client) request(method, endpoint string, form url.Values, token string, cookie bool) ([]byte, error) {
 	// POST requests are not idempotent — never retry them.
 	maxAttempts := maxRetries
 	if method == "POST" {
@@ -122,12 +177,17 @@ func (c *Client) do(method, path string, form url.Values) ([]byte, error) {
 		if form != nil {
 			body = strings.NewReader(form.Encode())
 		}
-		req, err := http.NewRequest(method, APIBase+path, body)
+		req, err := http.NewRequest(method, endpoint, body)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("User-Agent", auth.UserAgent)
+		if cookie {
+			req.Header.Set("Cookie", c.cookie)
+			req.Header.Set("User-Agent", c.userAgent)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("User-Agent", auth.UserAgent)
+		}
 		if form != nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		}
@@ -140,11 +200,18 @@ func (c *Client) do(method, path string, form url.Values) ([]byte, error) {
 			}
 			continue
 		}
-		data, _ := io.ReadAll(resp.Body)
+		data, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+
+		if cookie && (resp.StatusCode == 401 || resp.StatusCode == 403 || (resp.StatusCode != 429 && resp.StatusCode < 500 && !json.Valid(data))) {
+			return nil, errCookieExpired
+		}
 
 		switch {
 		case resp.StatusCode == 429 || resp.StatusCode >= 500:
+			if cookie && attempt == maxAttempts && !json.Valid(data) {
+				return nil, errCookieExpired
+			}
 			ra, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 			lastErr = fmt.Errorf("reddit returned %s", resp.Status)
 			if attempt < maxAttempts {
@@ -154,7 +221,13 @@ func (c *Client) do(method, path string, form url.Values) ([]byte, error) {
 		case resp.StatusCode == 401:
 			return nil, fmt.Errorf("unauthorized — token rejected, try `reddit login` again")
 		case resp.StatusCode >= 300:
+			if cookie {
+				return nil, fmt.Errorf("reddit returned %s", resp.Status)
+			}
 			return nil, fmt.Errorf("reddit returned %s: %s", resp.Status, truncate(data))
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("cannot read Reddit response")
 		}
 		return data, nil
 	}
@@ -185,9 +258,16 @@ func truncate(b []byte) string {
 // GetRaw fetches path (with optional query params) and returns the raw response
 // body bytes. Callers that want to emit unmodified upstream JSON use this.
 func (c *Client) GetRaw(path string, params url.Values) ([]byte, error) {
-	if len(params) > 0 {
-		path += "?" + params.Encode()
+	u, err := url.ParseRequestURI(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Reddit read path")
 	}
+	q := u.Query()
+	for key, values := range params {
+		q[key] = values
+	}
+	u.RawQuery = q.Encode()
+	path = u.String()
 	return c.do("GET", path, nil)
 }
 
@@ -213,4 +293,40 @@ func (c *Client) Post(path string, form url.Values, v any) error {
 		return nil
 	}
 	return json.Unmarshal(data, v)
+}
+
+func ValidateCookie(cookie, userAgent string) (string, error) {
+	c := &Client{cookie: cookie, userAgent: userAgent, http: auth.NewHTTPClient(30 * time.Second)}
+	c.http.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	data, err := c.request(http.MethodGet, WebBase+"/api/me.json?raw_json=1", nil, "", true)
+	if err != nil {
+		return "", err
+	}
+	_, name, err := cookieIdentity(data)
+	return name, err
+}
+
+func cookieIdentity(data []byte) ([]byte, string, error) {
+	var out struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(data, &out) != nil {
+		return nil, "", errCookieExpired
+	}
+	var me struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(out.Data, &me) != nil || me.Name == "" {
+		return nil, "", errCookieExpired
+	}
+	return out.Data, me.Name, nil
+}
+
+func (c *Client) Whoami() ([]byte, error) {
+	if c.cookie == "" {
+		if err := c.RequireUser(); err != nil {
+			return nil, err
+		}
+	}
+	return c.GetRaw("/api/v1/me", nil)
 }

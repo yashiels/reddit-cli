@@ -1,13 +1,3 @@
-// Package auth handles Reddit OAuth.
-//
-// Two modes:
-//   - Anonymous (default, zero-config): the official Android app's installed_client
-//     grant, using the client_id extracted from the Reddit APK. Read-only, no account.
-//   - User: password grant against a *script* app you register at
-//     https://www.reddit.com/prefs/apps. Reddit blocks password auth for installed
-//     apps, so user actions (vote/reply/whoami) require your own script app.
-//
-// Mimicking the first-party client is against Reddit's API ToS — personal use only.
 package auth
 
 import (
@@ -54,18 +44,17 @@ const (
 	installedGrant = "https://oauth.reddit.com/grants/installed_client"
 )
 
-// Session is the on-disk auth state for a logged-in user (script app).
-// Password is stored (0600) so the token can refresh silently — the password
-// grant returns no refresh_token.
 type Session struct {
-	ClientID     string    `json:"client_id"`
-	ClientSecret string    `json:"client_secret"`
-	Username     string    `json:"username"`
-	Password     string    `json:"password,omitempty"`
-	Cookie       string    `json:"cookie,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
-	AccessToken  string    `json:"access_token"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	ClientID     string         `json:"client_id"`
+	ClientSecret string         `json:"client_secret"`
+	Username     string         `json:"username"`
+	Password     string         `json:"password,omitempty"`
+	Cookie       string         `json:"cookie,omitempty"`
+	UserAgent    string         `json:"user_agent,omitempty"`
+	AccessToken  string         `json:"access_token"`
+	ExpiresAt    time.Time      `json:"expires_at"`
+	Native       *NativeSession `json:"native,omitempty"`
+	Revision     string         `json:"revision,omitempty"`
 
 	otp string // transient 2FA code; unexported so json never serializes it
 }
@@ -80,58 +69,48 @@ func sessionPath() (string, error) {
 
 // Load reads the stored user session, or nil if not logged in (no error).
 func Load() (*Session, error) {
-	path, err := sessionPath()
-	if err != nil {
-		return nil, err
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var s Session
-	if err := json.Unmarshal(b, &s); err != nil {
-		return nil, err
-	}
-	return &s, nil
+	return loadSession()
 }
 
 func (s *Session) save() error {
-	path, err := sessionPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
+	return withSessionLock(func() error { return replaceSession(s) })
 }
 
 func (s *Session) valid() bool {
 	return s.AccessToken != "" && time.Now().Before(s.ExpiresAt.Add(-60*time.Second))
 }
 
-// Token returns a valid user bearer token, refreshing via the stored password if needed.
 func (s *Session) Token() (string, error) {
+	return s.TokenWithValidator(nil)
+}
+
+func (s *Session) TokenWithValidator(validate Validator) (string, error) {
+	if s.Native != nil {
+		return s.nativeToken(validate)
+	}
 	if s.valid() {
 		return s.AccessToken, nil
 	}
 	if s.Password == "" {
 		return "", fmt.Errorf("token expired and no stored password — run `reddit login`")
 	}
-	if err := s.refresh(); err != nil {
-		return "", err
-	}
-	if err := s.save(); err != nil {
+	if err := withSessionLock(func() error {
+		current, err := loadSession()
+		if err != nil {
+			return err
+		}
+		if current == nil || current.Revision != s.Revision || current.Native != nil {
+			return fmt.Errorf("session changed; retry the command")
+		}
+		if err := current.refresh(); err != nil {
+			return err
+		}
+		if err := persistSession(current); err != nil {
+			return err
+		}
+		*s = *current
+		return nil
+	}); err != nil {
 		return "", err
 	}
 	return s.AccessToken, nil
@@ -190,15 +169,23 @@ func ReadCookieFile(path string) (string, string, error) {
 }
 
 func LoginWithCookie(cookie, userAgent string) (*Session, error) {
-	s, err := Load()
-	if err != nil {
-		return nil, err
-	}
-	if s == nil {
-		s = &Session{}
-	}
-	s.Cookie, s.UserAgent = cookie, userAgent
-	if err := s.save(); err != nil {
+	var s *Session
+	if err := withSessionLock(func() error {
+		var err error
+		s, err = loadSession()
+		if err != nil {
+			return err
+		}
+		wasNative := s != nil && s.Native != nil
+		if s == nil || s.Native != nil {
+			s = &Session{}
+		}
+		s.Cookie, s.UserAgent = cookie, userAgent
+		if wasNative {
+			return replaceSession(s)
+		}
+		return persistSession(s)
+	}); err != nil {
 		return nil, err
 	}
 	return s, nil

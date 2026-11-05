@@ -46,11 +46,21 @@ type thing struct {
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate with browser cookies, a bearer token, or a script app",
+	Short: "Authenticate with a native session, browser cookies, a bearer token, or a script app",
 	Long: "Stores credentials in the OS config directory at reddit-cli/credentials.json (0600).\n" +
-		"Use --cookie-file for browser-cookie reads, --access-token for an OAuth bearer,\n" +
+		"Use --native-session-file for automatic native renewal, --cookie-file for browser reads,\n" +
+		"--access-token for an OAuth bearer,\n" +
 		"or script-app credentials for password login. Treat stored credentials like a password.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("native-session-file") {
+			path, _ := cmd.Flags().GetString("native-session-file")
+			s, err := auth.LoginWithNativeFile(path, api.ValidateNativeIdentity)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("stored native session for u/%s (automatic renewal enabled)\n", s.Username)
+			return nil
+		}
 		cookieFile, _ := cmd.Flags().GetString("cookie-file")
 		if cmd.Flags().Changed("cookie-file") {
 			cookie, userAgent, err := auth.ReadCookieFile(cookieFile)
@@ -606,6 +616,7 @@ func oneLine(s string) string {
 }
 
 func init() {
+	loginCmd.Flags().String("native-session-file", "", "private JSON file containing native cookie and user_agent for automatic renewal")
 	loginCmd.Flags().String("cookie-file", "", "file containing Cookie header value on line 1 and browser User-Agent on line 2")
 	loginCmd.Flags().String("client-id", "", "script-app client id (prompted if omitted)")
 	loginCmd.Flags().String("client-secret", "", "script-app client secret")
@@ -628,6 +639,9 @@ func init() {
 
 	loginCmd.MarkFlagsMutuallyExclusive("cookie-file", "access-token")
 	loginCmd.MarkFlagsMutuallyExclusive("cookie-file", "client-id")
+	for _, flag := range []string{"cookie-file", "access-token", "client-id", "client-secret", "user", "password", "otp"} {
+		loginCmd.MarkFlagsMutuallyExclusive("native-session-file", flag)
+	}
 	rootCmd.AddCommand(loginCmd, whoamiCmd, userCmd, feedCmd, commentsCmd,
 		searchCmd, subredditCmd, postsCmd, voteCmd, replyCmd)
 }

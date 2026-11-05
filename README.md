@@ -24,8 +24,48 @@ setup — via the app's `installed_client` grant:
 ./reddit comments t3_1u90dkx
 ```
 
-**User (for vote/reply/whoami).** Reddit blocks password auth for the official
-*installed* app, so user actions need your **own script app** (free, 2 min):
+### Native sessions with automatic renewal
+
+Import an owner-authorized native Reddit session from a private JSON file:
+
+```json
+{"cookie":"reddit_session=YOUR_NATIVE_SESSION_VALUE","user_agent":"Reddit/Version 2026.44.0/Build 2644080/Android 14"}
+```
+
+```sh
+chmod 600 /path/to/native-import.json
+./reddit login --native-session-file /path/to/native-import.json
+./reddit whoami
+./reddit search "golang" --limit 3
+```
+
+The file must contain only `cookie` and `user_agent`. Supply exactly one native
+`reddit_session` cookie pair, not a bearer token or browser Cookie header. The
+import file must be a regular file, not a symlink. Import renews the bearer and
+validates the account before saving. Delete the input file after import and treat
+the stored session like a password.
+
+Commands renew an expired or missing bearer lazily and verify the same account
+before using it. Android, a browser, a background service and a password are not
+needed for renewal. Reads use OAuth with the native User-Agent. Credentials and
+any rotated session cookie are saved together with mode 0600 in the OS config
+directory at `reddit-cli/credentials.json`. Concurrent processes coordinate with
+a bounded file lock; if storage is busy, retry the command.
+
+Server revocation or session-cookie expiry requires a fresh authorized import.
+Network, identity and storage failures return an error without falling back to
+anonymous access. A crash after a server rotates a single-use cookie but before
+local persistence can also require reimport. Cookie rotation is supported, but
+the verified native responses so far retained the original session cookie.
+
+Native import replaces any previous login mode. Logging in with browser cookies,
+a pasted bearer or a script app clears native renewal state. The native import
+flag cannot be combined with other credential flags.
+
+### Script-app login
+
+Reddit blocks password auth for the official *installed* app. For password login,
+use your **own script app** (free, 2 min):
 
 1. Go to <https://www.reddit.com/prefs/apps> → *create another app* → type **script**.
 2. Note the client id (under the app name) and the secret.
@@ -51,7 +91,8 @@ header value on line 1 of a local file and its User-Agent on line 2, then run:
 ```
 
 Login validates the browser identity before saving `cookie` and `user_agent`
-in the same 0600 credentials file, preserving existing OAuth credentials.
+in the same 0600 credentials file, preserving existing legacy OAuth credentials.
+Switching from native mode clears its bearer and renewal state.
 All reads use reddit.com JSON endpoints with those cookies; `whoami` shows the
 browser account. Re-run this login when the cookie session expires. Reads fall
 back to OAuth if cookies are rejected. Vote/reply still require OAuth login.

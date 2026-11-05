@@ -39,11 +39,13 @@ const (
 var noSleep bool
 
 type Client struct {
-	cookie    string
-	userAgent string
-	token     func() (string, error)
-	authed    bool
-	http      *http.Client
+	cookie        string
+	userAgent     string
+	native        bool
+	singleAttempt bool
+	token         func() (string, error)
+	authed        bool
+	http          *http.Client
 }
 
 // New returns a client. If a user session exists it acts as that user; otherwise
@@ -55,6 +57,11 @@ func New() (*Client, error) {
 	}
 	c := &Client{http: auth.NewHTTPClient(30 * time.Second)}
 	c.http.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	if s != nil && s.Native != nil {
+		c.native, c.authed, c.userAgent = true, true, s.Native.UserAgent
+		c.token = func() (string, error) { return s.TokenWithValidator(ValidateNativeIdentity) }
+		return c, nil
+	}
 	if s != nil {
 		c.cookie, c.userAgent = s.Cookie, s.UserAgent
 	}
@@ -165,7 +172,7 @@ func (c *Client) oauthRequest(method, path string, form url.Values) ([]byte, err
 func (c *Client) request(method, endpoint string, form url.Values, token string, cookie bool) ([]byte, error) {
 	// POST requests are not idempotent — never retry them.
 	maxAttempts := maxRetries
-	if method == "POST" {
+	if method == "POST" || c.singleAttempt {
 		maxAttempts = 0
 	}
 
@@ -187,6 +194,9 @@ func (c *Client) request(method, endpoint string, form url.Values, token string,
 		} else {
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("User-Agent", auth.UserAgent)
+			if c.native {
+				req.Header.Set("User-Agent", c.userAgent)
+			}
 		}
 		if form != nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -194,14 +204,24 @@ func (c *Client) request(method, endpoint string, form url.Values, token string,
 
 		resp, err := c.http.Do(req)
 		if err != nil {
+			if c.native {
+				err = fmt.Errorf("native API request failed")
+			}
 			lastErr = err
 			if attempt < maxAttempts {
 				backoff(attempt, 0)
 			}
 			continue
 		}
-		data, readErr := io.ReadAll(resp.Body)
+		var reader io.Reader = resp.Body
+		if c.singleAttempt {
+			reader = io.LimitReader(resp.Body, (1<<20)+1)
+		}
+		data, readErr := io.ReadAll(reader)
 		resp.Body.Close()
+		if c.singleAttempt && (readErr != nil || len(data) > 1<<20) {
+			return nil, fmt.Errorf("invalid native identity response")
+		}
 
 		if cookie && (resp.StatusCode == 401 || resp.StatusCode == 403 || (resp.StatusCode != 429 && resp.StatusCode < 500 && !json.Valid(data))) {
 			return nil, errCookieExpired
@@ -214,6 +234,9 @@ func (c *Client) request(method, endpoint string, form url.Values, token string,
 			}
 			ra, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 			lastErr = fmt.Errorf("reddit returned %s", resp.Status)
+			if c.native {
+				lastErr = fmt.Errorf("native API returned HTTP %d", resp.StatusCode)
+			}
 			if attempt < maxAttempts {
 				backoff(attempt, ra)
 			}
@@ -221,6 +244,9 @@ func (c *Client) request(method, endpoint string, form url.Values, token string,
 		case resp.StatusCode == 401:
 			return nil, fmt.Errorf("unauthorized — token rejected, try `reddit login` again")
 		case resp.StatusCode >= 300:
+			if c.native {
+				return nil, fmt.Errorf("native API returned HTTP %d", resp.StatusCode)
+			}
 			if cookie {
 				return nil, fmt.Errorf("reddit returned %s", resp.Status)
 			}
@@ -232,6 +258,23 @@ func (c *Client) request(method, endpoint string, form url.Values, token string,
 		return data, nil
 	}
 	return nil, fmt.Errorf("giving up after %d retries: %w", maxAttempts, lastErr)
+}
+
+func ValidateNativeIdentity(token, userAgent string) (auth.Identity, error) {
+	c := &Client{native: true, userAgent: userAgent, singleAttempt: true, http: auth.NewHTTPClient(30 * time.Second)}
+	c.http.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	data, err := c.request(http.MethodGet, APIBase+"/api/v1/me", nil, token, false)
+	if err != nil {
+		return auth.Identity{}, fmt.Errorf("native identity validation failed")
+	}
+	var identity struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(data, &identity) != nil || identity.ID == "" || identity.Name == "" {
+		return auth.Identity{}, fmt.Errorf("invalid native identity response")
+	}
+	return auth.Identity{ID: identity.ID, Username: identity.Name}, nil
 }
 
 func backoff(attempt, retryAfter int) {

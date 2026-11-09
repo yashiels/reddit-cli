@@ -170,6 +170,14 @@ func (c *Client) oauthRequest(method, path string, form url.Values) ([]byte, err
 }
 
 func (c *Client) request(method, endpoint string, form url.Values, token string, cookie bool) ([]byte, error) {
+	var body, contentType string
+	if form != nil {
+		body, contentType = form.Encode(), "application/x-www-form-urlencoded"
+	}
+	return c.requestBody(method, endpoint, body, contentType, token, cookie)
+}
+
+func (c *Client) requestBody(method, endpoint, body, contentType, token string, cookie bool) ([]byte, error) {
 	// POST requests are not idempotent — never retry them.
 	maxAttempts := maxRetries
 	if method == "POST" || c.singleAttempt {
@@ -180,11 +188,7 @@ func (c *Client) request(method, endpoint string, form url.Values, token string,
 	for attempt := 0; attempt <= maxAttempts; attempt++ {
 		shudder()
 
-		var body io.Reader // rebuilt each attempt: a Reader is single-use
-		if form != nil {
-			body = strings.NewReader(form.Encode())
-		}
-		req, err := http.NewRequest(method, endpoint, body)
+		req, err := http.NewRequest(method, endpoint, strings.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -198,8 +202,8 @@ func (c *Client) request(method, endpoint string, form url.Values, token string,
 				req.Header.Set("User-Agent", c.userAgent)
 			}
 		}
-		if form != nil {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
 		}
 
 		resp, err := c.http.Do(req)

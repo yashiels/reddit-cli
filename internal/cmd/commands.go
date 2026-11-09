@@ -216,7 +216,11 @@ var feedCmd = &cobra.Command{
 var commentsCmd = &cobra.Command{
 	Use:   "comments <post-id>",
 	Short: "Show a post and its top-level comments",
-	Args:  cobra.ExactArgs(1),
+	Long: "Show a post and its top-level comments. Native sessions use PostComments GraphQL.\n" +
+		"With --json, native sessions emit the raw GraphQL envelope (data.postInfoById.commentForest.trees);\n" +
+		"other sessions emit the legacy two-listing array. Native text shows at most --limit top-level\n" +
+		"comments returned, without following pagination or replies; the header shows title, subreddit and comment count.",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		limit, _ := cmd.Flags().GetInt("limit")
 		sort, _ := cmd.Flags().GetString("sort")
@@ -237,13 +241,16 @@ var commentsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		// /comments/<id> returns [postListing, commentsListing]
-		data, err := c.GetRaw("/comments/"+id, url.Values{"limit": {fmt.Sprint(limit)}, "sort": {sort}, "raw_json": {"1"}})
+		data, nativePost, err := c.CommentsRaw(id, sort, limit)
 		if err != nil {
 			return err
 		}
 		if jsonOut {
 			return writeRaw(data)
+		}
+		if nativePost != nil {
+			printNativeComments(nativePost, limit)
+			return nil
 		}
 		var out []listing
 		if err := json.Unmarshal(data, &out); err != nil {

@@ -110,3 +110,13 @@ reddit whoami
 reddit vote t3_1u90dkx up
 reddit reply t1_abcdef "Nice writeup, thanks!"
 ```
+
+With a native session, `reddit comments` uses the persisted PostComments GraphQL
+read. `--json` preserves the raw GraphQL envelope: comments are under
+`data.postInfoById.commentForest.trees`, including pagination placeholders and
+unknown upstream fields. Other auth modes keep the legacy two-listing JSON array.
+Native text output shows at most `--limit` top-level comment nodes returned by
+Reddit, skipping placeholders and replies without fetching further pages. It can
+return fewer comments than requested. The native post header shows title,
+subreddit and comment count; post author, score and selftext are unavailable in
+this query.

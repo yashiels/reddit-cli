@@ -121,3 +121,13 @@ Pulled from `base.apk` (com.reddit.frontpage 2026.24.0 / build 2624050):
 Go's default HTTP/2 TLS fingerprint trips Reddit's Cloudflare bot wall (it
 serves an HTML interstitial instead of JSON). The client pins HTTP/1.1, which
 passes. See `internal/auth.NewHTTPClient`.
+
+With a native session, `reddit comments` uses the persisted PostComments GraphQL
+read. `--json` preserves the raw GraphQL envelope: comments are under
+`data.postInfoById.commentForest.trees`, including pagination placeholders and
+unknown upstream fields. Other auth modes keep the legacy two-listing JSON array.
+Native text output shows at most `--limit` top-level comment nodes returned by
+Reddit, skipping placeholders and replies without fetching further pages. It can
+return fewer comments than requested. The native post header shows title,
+subreddit and comment count; post author, score and selftext are unavailable in
+this query.
